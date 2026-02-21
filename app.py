@@ -11,7 +11,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 2. Fetch data
 try:
-    df = conn.read(worksheet="Habit_Tracker", ttl=0)
+    df = conn.read(worksheet="Sheet1", ttl=0)
     df = df.dropna(how="all")
 except:
     df = pd.DataFrame(columns=["Date", "Exercise", "Affirmations", "Teeth_Whitening", "Job_Apps", "Networking", "Budget", "Night_Affirmations"])
