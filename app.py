@@ -43,20 +43,33 @@ with st.sidebar:
     st.button("+1 Networking", on_click=increment_net)
 
     if st.button("Save Daily Log"):
-        new_entry = pd.DataFrame([{
-            "Date": log_date.strftime("%Y-%m-%d"),
+        date_str = log_date.strftime("%Y-%m-%d")
+        new_entry = {
+            "Date": date_str,
             "Exercise": ex, "Affirmations": aff, "Teeth_Whitening": teeth,
             "Job_Apps": st.session_state.job_count, 
             "Networking": st.session_state.net_count,
             "Budget": budget, "Night_Affirmations": night_aff
-        }])
-        updated_df = pd.concat([df, new_entry], ignore_index=True)
+        }
+
+        # Normalize dates for comparison
+        df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
+        
+        if date_str in df["Date"].values:
+            # Update existing row for that date
+            idx = df.index[df["Date"] == date_str][0]
+            for key, val in new_entry.items():
+                df.at[idx, key] = val
+            updated_df = df
+        else:
+            # Append new row
+            updated_df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+
         conn.update(worksheet="Sheet1", data=updated_df)
-        st.session_state.job_count = 0 # Reset counters
+        st.session_state.job_count = 0
         st.session_state.net_count = 0
         st.success("Saved!")
         st.rerun()
-
 # 5. Dashboard & Streaks
 st.subheader("Your Progress")
 
