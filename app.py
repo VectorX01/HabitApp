@@ -51,7 +51,7 @@ with st.sidebar:
             "Budget": budget, "Night_Affirmations": night_aff
         }])
         updated_df = pd.concat([df, new_entry], ignore_index=True)
-        conn.update(worksheet="Habit_Tracker", data=updated_df)
+        conn.update(worksheet="Sheet1", data=updated_df)
         st.session_state.job_count = 0 # Reset counters
         st.session_state.net_count = 0
         st.success("Saved!")
