@@ -3,27 +3,31 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Personal Growth Tracker", layout="wide")
-st.title("🚀 Personal Growth Tracker")
+st.set_page_config(page_title="Habit Accountability Log", layout="wide")
+st.title("Habit Accountability Log")
 
 # ---------------------------------------------------------------------------
 # 1. Habit configuration
 #    type "bool"  -> daily yes/no checkbox
 #    type "count" -> daily counter (e.g. how many job apps sent today)
+#    weekly_target -> for bool: days/week required. for count: total sum/week
+#                      required.
+#    daily_target  -> count habits only. minimum count that counts the day as
+#                      "done" for streak/miss purposes (default: any count > 0).
 # ---------------------------------------------------------------------------
 HABITS = {
-    "Say_Affirmations":       {"label": "Say Affirmations",        "emoji": "🗣️", "type": "bool"},
-    "Gym":                    {"label": "Gym",                     "emoji": "🏋️", "type": "bool"},
-    "Interview_Prep":         {"label": "Interview Prep",          "emoji": "🎯", "type": "bool"},
-    "Brain_Teasers":          {"label": "Brain Teasers",           "emoji": "🧩", "type": "bool"},
-    "Coding":                 {"label": "Coding",                  "emoji": "💻", "type": "bool"},
-    "Evening_Run":            {"label": "Evening Run",             "emoji": "🏃", "type": "bool"},
-    "Job_Applications":       {"label": "Job Applications",        "emoji": "📄", "type": "count"},
-    "Communication_Practice": {"label": "Communication Practice",  "emoji": "🎤", "type": "bool"},
-    "Networking":             {"label": "Networking",              "emoji": "🤝", "type": "count"},
-    "Write_Affirmations":     {"label": "Write Affirmations",      "emoji": "✍️", "type": "bool"},
-    "Teeth_Care_Night":       {"label": "Teeth Care @ Night",      "emoji": "🦷", "type": "bool"},
-    "Skin_Care_Night":        {"label": "Skin Care @ Night",       "emoji": "🧴", "type": "bool"},
+    "Say_Affirmations":       {"label": "Say Affirmations",        "emoji": "🗣️", "type": "bool",  "weekly_target": 7},
+    "Gym":                    {"label": "Gym",                     "emoji": "🏋️", "type": "bool",  "weekly_target": 6},
+    "Interview_Prep":         {"label": "Interview Prep",          "emoji": "🎯", "type": "bool",  "weekly_target": 7},
+    "Brain_Teasers":          {"label": "Brain Teasers",           "emoji": "🧩", "type": "bool",  "weekly_target": 7},
+    "Coding":                 {"label": "Coding",                  "emoji": "💻", "type": "bool",  "weekly_target": 7},
+    "Evening_Run":            {"label": "Evening Run",             "emoji": "🏃", "type": "bool",  "weekly_target": 6},
+    "Job_Applications":       {"label": "Job Applications",        "emoji": "📄", "type": "count", "weekly_target": 70, "daily_target": 10},
+    "Communication_Practice": {"label": "Communication Practice",  "emoji": "🎤", "type": "bool",  "weekly_target": 7},
+    "Networking":             {"label": "Networking",              "emoji": "🤝", "type": "count", "weekly_target": 5},
+    "Write_Affirmations":     {"label": "Write Affirmations",      "emoji": "✍️", "type": "bool",  "weekly_target": 7},
+    "Teeth_Care_Night":       {"label": "Teeth Care @ Night",      "emoji": "🦷", "type": "bool",  "weekly_target": 7},
+    "Skin_Care_Night":        {"label": "Skin Care @ Night",       "emoji": "🧴", "type": "bool",  "weekly_target": 7},
 }
 HABIT_KEYS = list(HABITS.keys())
 BOOL_HABITS = [k for k, v in HABITS.items() if v["type"] == "bool"]
@@ -126,9 +130,13 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # 5. Streak calculations
 # ---------------------------------------------------------------------------
-def is_done(value, habit_type):
+def is_done(value, key):
+    habit = HABITS[key]
     v = as_number(value)
-    return v > 0 if habit_type == "count" else int(v) == 1
+    if habit["type"] == "count":
+        daily_target = habit.get("daily_target")
+        return v >= daily_target if daily_target else v > 0
+    return int(v) == 1
 
 
 def current_streak(data, key):
@@ -146,7 +154,7 @@ def current_streak(data, key):
             expected_date = row_date
         if row_date != expected_date:
             break
-        if not is_done(row[key], HABITS[key]["type"]):
+        if not is_done(row[key], key):
             break
         streak += 1
         expected_date = expected_date - timedelta(days=1)
@@ -165,7 +173,7 @@ def best_streak(data, key):
     prev_date = None
     for _, row in d.iterrows():
         row_date = row["Date"].normalize()
-        if is_done(row[key], HABITS[key]["type"]):
+        if is_done(row[key], key):
             if prev_date is not None and (row_date - prev_date).days == 1:
                 current += 1
             else:
@@ -177,44 +185,103 @@ def best_streak(data, key):
     return best
 
 
+def week_progress(data, key, week_start, today):
+    if data.empty:
+        return 0
+    d = data.copy()
+    d["Date"] = pd.to_datetime(d["Date"])
+    week_df = d[(d["Date"] >= pd.Timestamp(week_start)) & (d["Date"] <= pd.Timestamp(today))]
+    if HABITS[key]["type"] == "bool":
+        return sum(is_done(v, key) for v in week_df[key])
+    return sum(as_number(v) for v in week_df[key])
+
+
+def build_miss_log(data, today, days=30):
+    """Every habit not done on a given day is a miss. A day with no log at
+    all counts as a miss for every habit — no log means nothing got done."""
+    if data.empty:
+        return pd.DataFrame(columns=["Date", "Habit_Key", "Habit"])
+    d = data.copy()
+    d["Date"] = pd.to_datetime(d["Date"])
+    first_log = d["Date"].min().normalize().date()
+    start = max(today - timedelta(days=days - 1), first_log)
+    lookup = d.set_index(d["Date"].dt.strftime("%Y-%m-%d"))
+    rows = []
+    for dt in pd.date_range(start, today, freq="D"):
+        date_str = dt.strftime("%Y-%m-%d")
+        row = lookup.loc[date_str] if date_str in lookup.index else None
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        for k in HABIT_KEYS:
+            done = is_done(row[k], k) if row is not None else False
+            if not done:
+                rows.append({"Date": date_str, "Habit_Key": k, "Habit": HABITS[k]["label"]})
+    return pd.DataFrame(rows, columns=["Date", "Habit_Key", "Habit"])
+
+
 streaks = {key: {"current": current_streak(df, key), "best": best_streak(df, key)} for key in HABIT_KEYS}
+
+if not today_row.empty:
+    done_today_map = {k: is_done(today_row.iloc[0][k], k) for k in HABIT_KEYS}
+else:
+    done_today_map = {
+        k: (st.session_state[f"chk_{k}"] if HABITS[k]["type"] == "bool" else st.session_state[f"cnt_{k}"] > 0)
+        for k in HABIT_KEYS
+    }
+
+today_date = datetime.now().date()
+week_start = today_date - timedelta(days=today_date.weekday())
+days_elapsed = (today_date - week_start).days + 1
+days_left = 7 - days_elapsed
+
+not_done_before_today = df[df["Date"] != today_str] if not df.empty else df
+at_risk = {
+    k: current_streak(not_done_before_today, k)
+    for k in HABIT_KEYS
+    if not done_today_map[k] and current_streak(not_done_before_today, k) > 0
+}
+
+miss_log = build_miss_log(df, today_date, days=30)
+miss_counts_30d = miss_log["Habit_Key"].value_counts().to_dict() if not miss_log.empty else {}
 
 # ---------------------------------------------------------------------------
 # 6. Dashboard
 # ---------------------------------------------------------------------------
-st.subheader("Today's Motivation")
+if at_risk:
+    lines = "  \n".join(f"**{HABITS[k]['label']}** — {v} day streak, not logged today" for k, v in at_risk.items())
+    st.error("STREAKS AT RISK TODAY — log these before the day ends:  \n" + lines)
 
-if not today_row.empty:
-    today_done = sum(is_done(today_row.iloc[0][k], HABITS[k]["type"]) for k in HABIT_KEYS)
-else:
-    today_done = sum(
-        (st.session_state[f"chk_{k}"] if HABITS[k]["type"] == "bool" else st.session_state[f"cnt_{k}"] > 0)
-        for k in HABIT_KEYS
-    )
-today_pct = today_done / len(HABIT_KEYS) * 100
-
-if today_pct == 100:
-    quote = "🔥 Perfect day! You're unstoppable."
-elif today_pct >= 75:
-    quote = "💪 Almost a clean sweep — finish strong."
-elif today_pct >= 50:
-    quote = "🌱 Solid progress, keep the momentum going."
-elif today_pct > 0:
-    quote = "⚡ Every habit logged counts. Keep going."
-else:
-    quote = "🌅 Fresh start — log your first habit today."
-
+st.subheader("Today's Status")
+today_done = sum(done_today_map.values())
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Today's Completion", f"{today_pct:.0f}%", f"{today_done}/{len(HABIT_KEYS)} habits")
+m1.metric("Completed Today", f"{today_done}/{len(HABIT_KEYS)}")
 m2.metric("Total Days Logged", len(df) if not df.empty else 0)
-longest_current = max((s["current"] for s in streaks.values()), default=0)
-m3.metric("Longest Active Streak 🔥", f"{longest_current} days")
-longest_best = max((s["best"] for s in streaks.values()), default=0)
-m4.metric("Best Streak Ever 🏆", f"{longest_best} days")
-st.info(quote)
+m3.metric("Misses (last 30d)", len(miss_log))
+m4.metric("Streaks at Risk", len(at_risk))
 
 st.divider()
-st.write("### 📋 Habit Streaks")
+st.write("### 🎯 Weekly Commitment")
+st.caption(f"Week of {week_start.strftime('%b %d')} — day {days_elapsed} of 7, {days_left} left.")
+cols = st.columns(3)
+for i, key in enumerate(HABIT_KEYS):
+    habit = HABITS[key]
+    target = habit["weekly_target"]
+    progress = week_progress(df, key, week_start, today_date)
+    remaining = max(target - progress, 0)
+    if remaining <= 0:
+        status, color = "TARGET HIT", "off"
+    elif habit["type"] == "bool" and remaining > days_left:
+        status, color = "TARGET MISSED THIS WEEK", "inverse"
+    else:
+        status, color = f"NEEDS {remaining:g} MORE", "inverse"
+    with cols[i % 3]:
+        with st.container(border=True):
+            st.markdown(f"**{habit['emoji']} {habit['label']}**")
+            st.write(f"{progress:g}/{target:g} this week")
+            st.badge(status, color="green" if color == "off" else "red")
+
+st.divider()
+st.write("### 📋 Streaks & Misses")
 cols = st.columns(3)
 for i, key in enumerate(HABIT_KEYS):
     habit = HABITS[key]
@@ -223,12 +290,26 @@ for i, key in enumerate(HABIT_KEYS):
             st.markdown(f"**{habit['emoji']} {habit['label']}**")
             if habit["type"] == "count":
                 today_val = int(as_number(today_row.iloc[0][key])) if not today_row.empty else st.session_state[f"cnt_{key}"]
-                st.write(f"Today: **{today_val}**")
+                daily_target = habit.get("daily_target")
+                if daily_target:
+                    st.write(f"Today: **{today_val}/{daily_target}** — " + ("Done" if done_today_map[key] else "NOT DONE"))
+                else:
+                    st.write(f"Today: **{today_val}**")
             else:
-                done_today = bool(int(as_number(today_row.iloc[0][key]))) if not today_row.empty else st.session_state[f"chk_{key}"]
-                st.write("Today: " + ("✅ Done" if done_today else "❌ Not yet"))
-            st.write(f"Current streak: 🔥 {streaks[key]['current']} days")
-            st.caption(f"Best streak: {streaks[key]['best']} days")
+                st.write("Today: " + ("Done" if done_today_map[key] else "NOT DONE"))
+            st.write(f"Current streak: {streaks[key]['current']} days (best: {streaks[key]['best']})")
+            st.caption(f"Misses in last 30 days: {miss_counts_30d.get(key, 0)}")
+
+st.divider()
+st.write("### 🧾 Miss Log — last 30 days, nothing hidden")
+if not miss_log.empty:
+    st.dataframe(
+        miss_log[["Date", "Habit"]].sort_values("Date", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+    )
+else:
+    st.write("No misses logged yet.")
 
 # ---------------------------------------------------------------------------
 # 7. Charts & accounting views
@@ -254,7 +335,7 @@ if not df.empty:
         if date_str not in df_lookup.index:
             return None
         row = df_lookup.loc[date_str]
-        done = sum(is_done(row[k], HABITS[k]["type"]) for k in HABIT_KEYS)
+        done = sum(is_done(row[k], k) for k in HABIT_KEYS)
         return done / len(HABIT_KEYS)
 
     def color_for(pct):
